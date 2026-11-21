@@ -113,7 +113,7 @@ The migration skips sales that already have a matching POS ledger entry and reca
 
 1. Push this folder to a GitHub repository.
 2. Go to [Vercel](https://vercel.com) → Add New Project → Import your repo.
-3. Use Node.js **20.9.0 or later** and add these environment variables in the Vercel project settings:
+3. Use Node.js **22.12+, 24.x, or 26+** and add these environment variables in the Vercel project settings:
    - `MONGODB_URI` — your MongoDB Atlas connection string
    - `MONGODB_DB` — database name (default: `Inpay`)
    - `ADMIN_SESSION_SECRET` — a private random secret of at least 32 characters; keep it configured

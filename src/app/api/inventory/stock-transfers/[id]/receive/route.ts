@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import mongoose from 'mongoose';
 import Item from '@/models/Item';
+import '@/models/Location';
 import StockTransfer from '@/models/StockTransfer';
+import '@/models/Unit';
 import { connectToDatabase } from '@/lib/mongoose';
 import { addStock, removeStock } from '@/lib/stock-balances';
 import { ApiError, withErrorHandler } from '@/lib/api-handler';

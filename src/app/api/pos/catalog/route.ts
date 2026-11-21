@@ -4,6 +4,7 @@ import Employee from '@/models/Employee';
 import Item from '@/models/Item';
 import Location from '@/models/Location';
 import StockBalance from '@/models/StockBalance';
+import '@/models/Unit';
 import { connectToDatabase } from '@/lib/mongoose';
 import { getPosCashierSession } from '@/lib/pos-auth';
 import { withErrorHandler } from '@/lib/api-handler';

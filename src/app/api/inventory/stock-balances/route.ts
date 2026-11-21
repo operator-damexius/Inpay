@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
+import '@/models/Category';
+import '@/models/Item';
+import '@/models/Location';
 import StockBalance from '@/models/StockBalance';
+import '@/models/Unit';
 import { connectToDatabase } from '@/lib/mongoose';
 import { withErrorHandler } from '@/lib/api-handler';
 

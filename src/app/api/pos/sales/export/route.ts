@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import CashierCredential from '@/models/CashierCredential';
 import Employee from '@/models/Employee';
+import '@/models/Location';
 import Sale, { type ISale } from '@/models/Sale';
 import { connectToDatabase } from '@/lib/mongoose';
 import { getPosCashierSession } from '@/lib/pos-auth';

@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import Purchase from '@/models/Purchase';
 import Item from '@/models/Item';
 import Location from '@/models/Location';
+import '@/models/Unit';
 import { connectToDatabase } from '@/lib/mongoose';
 import { addStock } from '@/lib/stock-balances';
 import { ApiError, withErrorHandler } from '@/lib/api-handler';

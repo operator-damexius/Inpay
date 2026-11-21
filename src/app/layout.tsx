@@ -22,8 +22,8 @@ export default function RootLayout({
         <link rel="icon" href="/favicon.ico" sizes="any" />
         <link rel="apple-touch-icon" href="/favicon.ico" />
       </Head>
-      <body className={inter.className}>
-        {children}
+      <body className={`${inter.className} flex min-h-screen flex-col`}>
+        <div className="flex-1">{children}</div>
         <SiteFooter />
       </body>
     </html>

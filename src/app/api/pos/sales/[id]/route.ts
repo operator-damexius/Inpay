@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import Sale from '@/models/Sale';
 import CashierCredential from '@/models/CashierCredential';
 import Employee from '@/models/Employee';
+import '@/models/Location';
 import { connectToDatabase } from '@/lib/mongoose';
 import { getPosCashierSession } from '@/lib/pos-auth';
 import { ApiError, withErrorHandler } from '@/lib/api-handler';

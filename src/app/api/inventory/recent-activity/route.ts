@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
+import '@/models/Item';
+import '@/models/Location';
 import Purchase from '@/models/Purchase';
 import Sale from '@/models/Sale';
 import StockAdjustment from '@/models/StockAdjustment';
 import StockTransfer from '@/models/StockTransfer';
+import '@/models/Unit';
 import { connectToDatabase } from '@/lib/mongoose';
 import { withErrorHandler } from '@/lib/api-handler';
 import {

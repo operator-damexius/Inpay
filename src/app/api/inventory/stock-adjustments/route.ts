@@ -4,6 +4,7 @@ import StockAdjustment from '@/models/StockAdjustment';
 import Item from '@/models/Item';
 import Location from '@/models/Location';
 import StockBalance from '@/models/StockBalance';
+import '@/models/Unit';
 import { connectToDatabase } from '@/lib/mongoose';
 import { addStock, removeStock } from '@/lib/stock-balances';
 import { ApiError, withErrorHandler } from '@/lib/api-handler';

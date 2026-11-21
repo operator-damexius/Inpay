@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import '@/models/Category';
 import Item from '@/models/Item';
 import Location from '@/models/Location';
 import Unit from '@/models/Unit';

@@ -6,6 +6,7 @@ import Employee from '@/models/Employee';
 import Item from '@/models/Item';
 import Ledger from '@/models/Ledger';
 import Location from '@/models/Location';
+import '@/models/Unit';
 import Sale, { type ISale } from '@/models/Sale';
 import StockBalance from '@/models/StockBalance';
 import { connectToDatabase } from '@/lib/mongoose';

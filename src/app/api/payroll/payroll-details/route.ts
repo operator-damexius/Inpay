@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import Employee from '@/models/Employee';
 import PayrollDetail from '@/models/PayrollDetail';
 import { connectToDatabase } from '@/lib/mongoose';
 import { withErrorHandler } from '@/lib/api-handler';

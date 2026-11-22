@@ -7,6 +7,8 @@ import '@/models/Unit';
 import { connectToDatabase } from '@/lib/mongoose';
 import { addStock } from '@/lib/stock-balances';
 import { ApiError, withErrorHandler } from '@/lib/api-handler';
+import { ensureDefaultLedgerAccounts, initializeLedgerAccounting, postJournalEntry } from '@/lib/ledger-accounting';
+import { getAdminUsername, isSameOriginRequest } from '@/lib/admin-auth';
 
 export const GET = withErrorHandler(async () => {
   await connectToDatabase();
@@ -19,6 +21,9 @@ export const GET = withErrorHandler(async () => {
 });
 
 export const POST = withErrorHandler(async (req: Request) => {
+  if (!isSameOriginRequest(req)) throw new ApiError('Invalid request origin.', 403);
+  const username = await getAdminUsername(req);
+  if (!username) throw new ApiError('Admin sign-in required.', 401);
   await connectToDatabase();
   const body = await req.json();
   const qty = Number(body.qty);
@@ -38,6 +43,7 @@ export const POST = withErrorHandler(async (req: Request) => {
   const locationExists = await Location.exists({ _id: body.locationId });
   if (!locationExists) throw new ApiError('The selected location no longer exists.', 400);
 
+  await initializeLedgerAccounting();
   const session = await mongoose.startSession();
   let purchaseId = '';
   try {
@@ -51,7 +57,7 @@ export const POST = withErrorHandler(async (req: Request) => {
         supplier: body.supplier || null,
         qty,
         unitCost,
-        totalCost: qty * unitCost,
+        totalCost: Math.round((qty * unitCost + Number.EPSILON) * 100) / 100,
         purchaseDate,
         status,
         reference: body.reference || null,
@@ -62,6 +68,25 @@ export const POST = withErrorHandler(async (req: Request) => {
       if (status === 'Received') {
         await addStock(body.itemId, body.locationId, qty, session, qty);
         await Item.updateOne({ _id: body.itemId }, { $inc: { stockOnHand: qty } }, { session });
+        const totalCost = Math.round((purchase.totalCost + Number.EPSILON) * 100) / 100;
+        if (totalCost > 0) {
+          const accounts = await ensureDefaultLedgerAccounts(session);
+          const inventory = accounts.get('INVENTORY');
+          const payables = accounts.get('PAYABLES');
+          if (!inventory || !payables) throw new ApiError('Default ledger accounts are not available.', 500);
+          await postJournalEntry({
+            sourceKey: `purchase:${purchase._id.toString()}`,
+            sourceType: 'purchase',
+            reference: purchase.reference || `PUR-${purchase._id.toString().slice(-8).toUpperCase()}`,
+            description: `Inventory purchase received (${qty} units)`,
+            date: purchase.purchaseDate,
+            lines: [
+              { account: inventory._id, debit: totalCost, credit: 0 },
+              { account: payables._id, debit: 0, credit: totalCost },
+            ],
+            createdBy: username,
+          }, session);
+        }
       }
     });
   } finally {

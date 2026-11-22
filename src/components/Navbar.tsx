@@ -50,6 +50,7 @@ export default function Navbar({ showSettingsSections = false }: { showSettingsS
           <div className="-mx-4 flex gap-2 overflow-x-auto border-t border-gray-100 py-2 sm:mx-0">
             <Link className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100" href="/settings#business-settings">Business &amp; fiscal</Link>
             <Link className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100" href="/settings#pos-settings">POS</Link>
+            <Link className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100" href="/settings#payroll-settings">Payroll</Link>
             <Link className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100" href="/settings#access-settings">Access</Link>
             <Link className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100" href="/settings#data-settings">Data &amp; backups</Link>
             <Link className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50" href="/settings#danger-zone">Danger zone</Link>

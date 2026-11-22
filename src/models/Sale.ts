@@ -12,6 +12,7 @@ export interface ISaleLine {
 
 export interface ISale extends Document {
   receiptNo: string;
+  idempotencyKey?: string;
   cashier: mongoose.Types.ObjectId;
   cashierName: string;
   businessName: string;
@@ -42,6 +43,7 @@ const SaleLineSchema = new Schema<ISaleLine>(
 
 const SaleSchema = new Schema<ISale>({
   receiptNo: { type: String, required: true, unique: true, trim: true },
+  idempotencyKey: { type: String, trim: true },
   cashier: { type: Schema.Types.ObjectId, ref: 'Employee', required: true },
   cashierName: { type: String, required: true },
   businessName: { type: String, required: true, default: 'Inpay' },
@@ -59,5 +61,11 @@ const SaleSchema = new Schema<ISale>({
 
 SaleSchema.index({ createdAt: -1 });
 SaleSchema.index({ cashier: 1, createdAt: -1 });
+SaleSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
+
+const existingSaleModel = mongoose.models.Sale;
+if (existingSaleModel && !existingSaleModel.schema.path('idempotencyKey')) {
+  delete mongoose.models.Sale;
+}
 
 export default mongoose.models.Sale || mongoose.model<ISale>('Sale', SaleSchema);

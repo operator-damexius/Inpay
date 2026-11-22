@@ -10,6 +10,9 @@ import Employee from '@/models/Employee';
 import EmployeeAccount from '@/models/EmployeeAccount';
 import Item from '@/models/Item';
 import Ledger from '@/models/Ledger';
+import LedgerAccount from '@/models/LedgerAccount';
+import JournalEntry from '@/models/JournalEntry';
+import LedgerReconciliation from '@/models/LedgerReconciliation';
 import Location from '@/models/Location';
 import PayrollDetail from '@/models/PayrollDetail';
 import PayrollRun from '@/models/PayrollRun';
@@ -23,10 +26,10 @@ import Unit from '@/models/Unit';
 
 export const MAX_BACKUP_BYTES = 50 * 1024 * 1024;
 export const BACKUP_FORMAT = 'inpay-database-backup';
-export const BACKUP_VERSION = 2;
+export const BACKUP_VERSION = 3;
 export const BACKUP_BUCKET_NAME = 'inpayAdminBackups';
 
-export const BUSINESS_COLLECTIONS = [
+const PREVIOUS_BUSINESS_COLLECTIONS = [
   Attendance.collection.name,
   CashierCredential.collection.name,
   Category.collection.name,
@@ -45,12 +48,25 @@ export const BUSINESS_COLLECTIONS = [
   Unit.collection.name,
 ];
 
-export const BACKUP_COLLECTIONS = [
-  ...BUSINESS_COLLECTIONS,
+const PREVIOUS_BACKUP_COLLECTIONS = [
+  ...PREVIOUS_BUSINESS_COLLECTIONS,
   AppSettings.collection.name,
   SystemAccount.collection.name,
 ];
-const LEGACY_BACKUP_VERSION = 1;
+
+export const BUSINESS_COLLECTIONS = [
+  ...PREVIOUS_BUSINESS_COLLECTIONS,
+  JournalEntry.collection.name,
+  LedgerReconciliation.collection.name,
+];
+
+export const BACKUP_COLLECTIONS = [
+  ...BUSINESS_COLLECTIONS,
+  LedgerAccount.collection.name,
+  AppSettings.collection.name,
+  SystemAccount.collection.name,
+];
+const SUPPORTED_BACKUP_VERSIONS = [1, 2, BACKUP_VERSION];
 const SYSTEM_ACCOUNT_COLLECTION = SystemAccount.collection.name;
 
 type BackupArchive = {
@@ -95,7 +111,7 @@ export function parseBackup(content: Buffer): BackupArchive {
     !('format' in archive) ||
     archive.format !== BACKUP_FORMAT ||
     !('version' in archive) ||
-    ![LEGACY_BACKUP_VERSION, BACKUP_VERSION].includes(archive.version as number) ||
+    !SUPPORTED_BACKUP_VERSIONS.includes(archive.version as number) ||
     !('collections' in archive) ||
     typeof archive.collections !== 'object' ||
     archive.collections === null ||
@@ -105,13 +121,17 @@ export function parseBackup(content: Buffer): BackupArchive {
   }
 
   const collections = archive.collections as Record<string, unknown>;
-  const allowed = new Set(BACKUP_COLLECTIONS);
+  const version = archive.version as number;
+  const versionCollections = version === 1
+    ? PREVIOUS_BACKUP_COLLECTIONS.filter((name) => name !== SYSTEM_ACCOUNT_COLLECTION)
+    : version === 2
+      ? PREVIOUS_BACKUP_COLLECTIONS
+      : BACKUP_COLLECTIONS;
+  const allowed = new Set(versionCollections);
   if (Object.keys(collections).some((name) => !allowed.has(name))) {
     throw new Error('Backup contains unsupported collection names.');
   }
-  const requiredCollections = archive.version === LEGACY_BACKUP_VERSION
-    ? BACKUP_COLLECTIONS.filter((name) => name !== SYSTEM_ACCOUNT_COLLECTION)
-    : BACKUP_COLLECTIONS;
+  const requiredCollections = versionCollections;
   if (
     requiredCollections.some(
       (name) => !Array.isArray(collections[name]) ||
@@ -128,7 +148,17 @@ export function parseBackup(content: Buffer): BackupArchive {
     throw new Error('Backup must include every application collection as an array of documents.');
   }
 
-  return archive as BackupArchive;
+  const normalizedCollections = { ...collections } as Record<string, Record<string, unknown>[]>;
+  for (const name of BACKUP_COLLECTIONS) {
+    if (!(name in normalizedCollections) && !(version === 1 && name === SYSTEM_ACCOUNT_COLLECTION)) {
+      normalizedCollections[name] = [];
+    }
+  }
+  return {
+    ...(archive as BackupArchive),
+    version: BACKUP_VERSION,
+    collections: normalizedCollections,
+  };
 }
 
 export async function captureDatabaseSnapshot() {

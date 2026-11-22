@@ -275,6 +275,7 @@ export default function EmployeesPage() {
               <input
                 className="input"
                 type="number"
+                min="0.01"
                 step="0.01"
                 name="ratePerDay"
                 value={form.ratePerDay}

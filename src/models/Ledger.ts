@@ -10,6 +10,15 @@ export interface ILedger extends Document {
   balance: number; // running balance after this entry
   date: Date;
   createdBy?: string;
+  reversalOf?: mongoose.Types.ObjectId;
+  migratedToJournal: boolean;
+  auditLog: Array<{
+    action: string;
+    oldValue: string;
+    newValue: string;
+    changedBy: string;
+    changedAt: Date;
+  }>;
   createdAt: Date;
 }
 
@@ -26,10 +35,28 @@ const LedgerSchema = new Schema<ILedger>({
   balance: { type: Number, required: true, default: 0 },
   date: { type: Date, required: true, default: Date.now },
   createdBy: { type: String },
+  reversalOf: { type: Schema.Types.ObjectId, ref: 'Ledger' },
+  migratedToJournal: { type: Boolean, default: false },
+  auditLog: {
+    type: [{
+      action: { type: String, required: true },
+      oldValue: { type: String, required: true },
+      newValue: { type: String, required: true },
+      changedBy: { type: String, required: true },
+      changedAt: { type: Date, required: true, default: Date.now },
+    }],
+    default: [],
+  },
   createdAt: { type: Date, default: Date.now },
 });
 
 LedgerSchema.index({ date: -1 });
 LedgerSchema.index({ type: 1 });
+LedgerSchema.index({ reversalOf: 1 }, { unique: true, sparse: true });
+
+const existingLedgerModel = mongoose.models.Ledger;
+if (existingLedgerModel && !existingLedgerModel.schema.path('migratedToJournal')) {
+  delete mongoose.models.Ledger;
+}
 
 export default mongoose.models.Ledger || mongoose.model<ILedger>('Ledger', LedgerSchema);

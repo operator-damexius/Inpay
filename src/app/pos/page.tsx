@@ -24,6 +24,14 @@ type PosConfig = {
   taxEnabled: boolean;
 };
 type CartLine = { item: Item; quantity: number; quantityInput: string };
+type PendingSale = {
+  idempotencyKey: string;
+  locationId: string;
+  customer: string;
+  paymentMethod: string;
+  items: Array<{ itemId: string; quantity: number }>;
+  timestamp: number;
+};
 type Sale = {
   _id: string;
   receiptNo: string;
@@ -199,19 +207,143 @@ export default function PosPage() {
     }));
   };
 
+  const [offlineQueue, setOfflineQueue] = useState<PendingSale[]>([]);
+  const [syncing, setSyncing] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('inpay_offline_sales');
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved);
+        if (!Array.isArray(parsed)) throw new Error('Saved offline sales are not in a valid format.');
+        const normalized = parsed.map((entry): PendingSale => {
+          if (
+            typeof entry !== 'object' ||
+            entry === null ||
+            !('locationId' in entry) ||
+            typeof entry.locationId !== 'string' ||
+            !('customer' in entry) ||
+            typeof entry.customer !== 'string' ||
+            !('paymentMethod' in entry) ||
+            typeof entry.paymentMethod !== 'string' ||
+            !('items' in entry) ||
+            !Array.isArray(entry.items) ||
+            !('timestamp' in entry) ||
+            typeof entry.timestamp !== 'number'
+          ) {
+            throw new Error('Saved offline sales are not in a valid format.');
+          }
+          const items = entry.items.map((line: unknown) => {
+            if (
+              typeof line !== 'object' ||
+              line === null ||
+              !('itemId' in line) ||
+              typeof line.itemId !== 'string' ||
+              !('quantity' in line) ||
+              typeof line.quantity !== 'number' ||
+              !Number.isFinite(line.quantity) ||
+              line.quantity <= 0
+            ) {
+              throw new Error('Saved offline sale contains an invalid item.');
+            }
+            return { itemId: line.itemId, quantity: line.quantity };
+          });
+          const idempotencyKey = 'idempotencyKey' in entry &&
+              typeof entry.idempotencyKey === 'string' &&
+              /^[A-Za-z0-9_-]{16,100}$/.test(entry.idempotencyKey)
+            ? entry.idempotencyKey
+            : crypto.randomUUID().replace(/-/g, '');
+          return {
+            idempotencyKey,
+            locationId: entry.locationId,
+            customer: entry.customer,
+            paymentMethod: entry.paymentMethod,
+            items,
+            timestamp: entry.timestamp,
+          };
+        });
+        setOfflineQueue(normalized);
+        localStorage.setItem('inpay_offline_sales', JSON.stringify(normalized));
+      }
+    } catch (storageError) {
+      setError(storageError instanceof Error ? storageError.message : 'Could not load saved offline sales.');
+    }
+  }, []);
+
+  const saveQueue = (queue: PendingSale[]) => {
+    try {
+      localStorage.setItem('inpay_offline_sales', JSON.stringify(queue));
+      setOfflineQueue(queue);
+      return true;
+    } catch (storageError) {
+      setError(storageError instanceof Error
+        ? `Could not save the offline sale on this device: ${storageError.message}`
+        : 'Could not save the offline sale on this device.');
+      return false;
+    }
+  };
+
+  const syncOfflineSales = useCallback(async () => {
+    if (offlineQueue.length === 0 || syncing) return;
+    setSyncing(true);
+    const remaining = [...offlineQueue];
+    for (const pending of [...offlineQueue]) {
+      try {
+        await readJson(await fetch('/api/pos/sales', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            locationId: pending.locationId,
+            customer: pending.customer,
+            paymentMethod: pending.paymentMethod,
+            items: pending.items,
+            idempotencyKey: pending.idempotencyKey,
+          }),
+        }));
+        remaining.shift();
+        if (!saveQueue([...remaining])) break;
+      } catch (syncError) {
+        setError(syncError instanceof Error ? syncError.message : 'Could not sync offline sales.');
+        break; // stop syncing on first network failure
+      }
+    }
+    setSyncing(false);
+    if (remaining.length === 0) {
+      await loadCatalog();
+    }
+  }, [offlineQueue, syncing, loadCatalog]);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      void syncOfflineSales();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, [syncOfflineSales]);
+
   const checkout = async () => {
     if (!locationId || !paymentMethod || cart.length === 0) return;
     setSubmitting(true);
     setError('');
+    const salePayload = {
+      idempotencyKey: crypto.randomUUID().replace(/-/g, ''),
+      locationId,
+      customer,
+      paymentMethod,
+      items: cart.map((line) => ({ itemId: line.item._id, quantity: line.quantity })),
+      timestamp: Date.now(),
+    };
+
     try {
       const completedSale = await readJson(await fetch('/api/pos/sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          locationId,
-          customer,
-          paymentMethod,
-          items: cart.map((line) => ({ itemId: line.item._id, quantity: line.quantity })),
+          locationId: salePayload.locationId,
+          customer: salePayload.customer,
+          paymentMethod: salePayload.paymentMethod,
+          items: salePayload.items,
+          idempotencyKey: salePayload.idempotencyKey,
         }),
       })) as Sale;
       setSale(completedSale);
@@ -219,9 +351,18 @@ export default function PosPage() {
       setCustomer('');
       await loadCatalog();
     } catch (checkoutError) {
-      setError(checkoutError instanceof Error ? checkoutError.message : 'Checkout failed.');
-      if (checkoutError instanceof Error && checkoutError.message.includes('Cashier sign-in')) {
-        setCashier(null);
+      const message = checkoutError instanceof Error ? checkoutError.message : 'Checkout failed.';
+      if (checkoutError instanceof TypeError || !navigator.onLine) {
+        if (saveQueue([...offlineQueue, salePayload])) {
+          setError('Network unavailable: sale saved locally and will sync when connection returns.');
+          setCart([]);
+          setCustomer('');
+        }
+      } else {
+        setError(message);
+        if (message.includes('Cashier sign-in')) {
+          setCashier(null);
+        }
       }
     } finally {
       setSubmitting(false);
@@ -288,6 +429,20 @@ export default function PosPage() {
       </div>
 
       {error && <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {offlineQueue.length > 0 && (
+        <div className="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div>
+            <span className="font-semibold">Offline Queue:</span> {offlineQueue.length} sale(s) saved locally.
+          </div>
+          <button
+            className="btn-ghost text-amber-900 hover:bg-amber-100"
+            onClick={() => void syncOfflineSales()}
+            disabled={syncing}
+          >
+            {syncing ? 'Syncing...' : 'Sync Now'}
+          </button>
+        </div>
+      )}
       {sale && (
         <section className="rounded-lg border border-green-200 bg-green-50 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">

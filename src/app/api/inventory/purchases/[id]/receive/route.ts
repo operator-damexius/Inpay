@@ -7,12 +7,18 @@ import '@/models/Unit';
 import { addStock } from '@/lib/stock-balances';
 import { connectToDatabase } from '@/lib/mongoose';
 import { ApiError, withErrorHandler } from '@/lib/api-handler';
+import { ensureDefaultLedgerAccounts, initializeLedgerAccounting, postJournalEntry } from '@/lib/ledger-accounting';
+import { getAdminUsername, isSameOriginRequest } from '@/lib/admin-auth';
 
 export const POST = withErrorHandler(async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
+  if (!isSameOriginRequest(req)) throw new ApiError('Invalid request origin.', 403);
+  const username = await getAdminUsername(req);
+  if (!username) throw new ApiError('Admin sign-in required.', 401);
   const { id } = await params;
   await connectToDatabase();
   if (!mongoose.isValidObjectId(id)) throw new ApiError('Invalid purchase ID.', 400);
 
+  await initializeLedgerAccounting();
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
@@ -39,6 +45,25 @@ export const POST = withErrorHandler(async (req: Request, { params }: { params: 
       purchase.status = 'Received';
       purchase.receivedAt = new Date();
       await purchase.save({ session });
+      const totalCost = Math.round((purchase.totalCost + Number.EPSILON) * 100) / 100;
+      if (totalCost > 0) {
+        const accounts = await ensureDefaultLedgerAccounts(session);
+        const inventory = accounts.get('INVENTORY');
+        const payables = accounts.get('PAYABLES');
+        if (!inventory || !payables) throw new ApiError('Default ledger accounts are not available.', 500);
+        await postJournalEntry({
+          sourceKey: `purchase:${purchase._id.toString()}`,
+          sourceType: 'purchase',
+          reference: purchase.reference || `PUR-${purchase._id.toString().slice(-8).toUpperCase()}`,
+          description: `Inventory purchase received (${purchase.qty} units)`,
+          date: purchase.purchaseDate,
+          lines: [
+            { account: inventory._id, debit: totalCost, credit: 0 },
+            { account: payables._id, debit: 0, credit: totalCost },
+          ],
+          createdBy: username,
+        }, session);
+      }
     });
 
     const purchase = await Purchase.findById(id)

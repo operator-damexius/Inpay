@@ -9,6 +9,13 @@ export interface IPayrollDetail extends Document {
   thirteenth: number;
   grossPay: number;
   netPay: number;
+  baseHoursPaid?: number;
+  overtimeHours?: number;
+  breakHours?: number;
+  hourlyRate?: number;
+  overtimeMultiplier?: number;
+  sssRate?: number;
+  thirteenthRate?: number;
   notes?: string;
 }
 
@@ -21,10 +28,22 @@ const PayrollDetailSchema = new Schema<IPayrollDetail>({
   thirteenth: { type: Number, default: 0 },
   grossPay: { type: Number, default: 0 },
   netPay: { type: Number, default: 0 },
+  baseHoursPaid: { type: Number },
+  overtimeHours: { type: Number },
+  breakHours: { type: Number },
+  hourlyRate: { type: Number },
+  overtimeMultiplier: { type: Number },
+  sssRate: { type: Number },
+  thirteenthRate: { type: Number },
   notes: { type: String },
 });
 
 PayrollDetailSchema.index({ run: 1, employee: 1 }, { unique: true });
+
+const existingPayrollDetailModel = mongoose.models.PayrollDetail;
+if (existingPayrollDetailModel && !existingPayrollDetailModel.schema.path('breakHours')) {
+  delete mongoose.models.PayrollDetail;
+}
 
 export default mongoose.models.PayrollDetail ||
   mongoose.model<IPayrollDetail>('PayrollDetail', PayrollDetailSchema);

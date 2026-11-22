@@ -3,14 +3,17 @@ import Attendance from '@/models/Attendance';
 import Employee from '@/models/Employee';
 import PayrollDetail from '@/models/PayrollDetail';
 import PayrollRun from '@/models/PayrollRun';
+import AppSettings from '@/models/AppSettings';
 import { connectToDatabase } from '@/lib/mongoose';
 import { withErrorHandler } from '@/lib/api-handler';
+import { getPayrollWorkDate } from '@/lib/payroll-attendance';
 
 export const GET = withErrorHandler(async () => {
   await connectToDatabase();
 
   const today = new Date();
-  const startOfToday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const settings = await AppSettings.findOne({ key: 'global' });
+  const startOfToday = getPayrollWorkDate(today, settings?.timezone || 'Asia/Manila');
   const startOfTomorrow = new Date(startOfToday);
   startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
 

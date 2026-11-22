@@ -7,6 +7,7 @@ export interface IAttendance extends Document {
   timeOut?: Date;
   totalHours: number;
   overtimeHours: number;
+  breakHours: number;
   shift?: string;
   createdAt: Date;
 }
@@ -18,12 +19,18 @@ const AttendanceSchema = new Schema<IAttendance>({
   timeOut: { type: Date },
   totalHours: { type: Number, default: 0 },
   overtimeHours: { type: Number, default: 0 },
+  breakHours: { type: Number, default: 0 },
   shift: { type: String },
   createdAt: { type: Date, default: Date.now },
 });
 
 AttendanceSchema.index({ employee: 1, workDate: 1 }, { unique: true });
 AttendanceSchema.index({ workDate: 1 });
+
+const existingAttendanceModel = mongoose.models.Attendance;
+if (existingAttendanceModel && !existingAttendanceModel.schema.path('breakHours')) {
+  delete mongoose.models.Attendance;
+}
 
 export default mongoose.models.Attendance ||
   mongoose.model<IAttendance>('Attendance', AttendanceSchema);

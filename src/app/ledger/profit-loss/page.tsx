@@ -153,16 +153,17 @@ export default function ProfitLossPage() {
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Profit &amp; Loss</h1>
-            <p className="text-sm text-gray-600">Ledger-based estimate</p>
+            <p className="text-sm text-gray-600">Journal-based report</p>
           </div>
         </div>
       </div>
 
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        Only entries assigned to an income or expense category are included. Transfers and adjustments are
-        excluded. Payroll and inventory purchases count only when recorded in the ledger and assigned a P&amp;L
-        category; they are not automatically imported from their separate records. POS receipts are retained
-        separately in Sales History and are not currently posted to the ledger or included in this report.
+        The report includes categorized journal income and expenses. POS sales and cost of goods sold post automatically.
+        Received inventory purchases increase Inventory and Accounts Payable; they are not an expense until sold.
+        Gross payroll expense, net payout, and SSS payable post when a run is marked paid. Transfers and reconciliation
+        adjustments are excluded. Historical ledger entries are migrated to the Cash account because older records did
+        not retain separate payment accounts.
       </div>
 
       <form

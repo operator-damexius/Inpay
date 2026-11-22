@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, User, Trash2, Edit3, Save, Wallet } from 'lucide-react';
+import { Plus, Trash2, Edit3, Save, Wallet } from 'lucide-react';
 
 type Account = {
   _id: string;
@@ -13,13 +13,21 @@ type Account = {
   isActive: boolean;
 };
 
+type Employee = {
+  _id: string;
+  employeeNo: string;
+  firstname: string;
+  lastname: string;
+};
+
 export default function EmployeeAccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [employees, setEmployees] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingId, setEditingId] = useState<string>('');
+  const [error, setError] = useState('');
   const [form, setForm] = useState({
     employeeId: '', employeeNo: '', firstname: '', lastname: '', balance: '', isActive: true,
   });
@@ -40,42 +48,56 @@ export default function EmployeeAccountsPage() {
 
   const addAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/employee-accounts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...form,
-      }),
-    });
-    if (res.ok) {
-      const acc = await res.json();
-      setAccounts([acc, ...accounts]);
+    setError('');
+    try {
+      const response = await fetch('/api/employee-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || 'Could not create employee account.');
+      setAccounts((current) => [result, ...current]);
       setOpen(false);
       setForm({ employeeId: '', employeeNo: '', firstname: '', lastname: '', balance: '', isActive: true });
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not create employee account.');
     }
   };
 
   const updateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch(`/api/employee-accounts/${editingId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...editForm,
-      }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setAccounts(accounts.map((a) => (a._id === updated._id ? updated : a)));
+    setError('');
+    try {
+      const response = await fetch(`/api/employee-accounts/${editingId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          balance: editForm.balance,
+          isActive: editForm.isActive,
+        }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || 'Could not update employee account.');
+      setAccounts((current) => current.map((account) => account._id === result._id ? result : account));
       setEditOpen(false);
       setEditingId('');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not update employee account.');
     }
   };
 
   const deleteAccount = async (id: string) => {
     if (!confirm('Delete this employee account?')) return;
-    await fetch(`/api/employee-accounts/${id}`, { method: 'DELETE' });
-    setAccounts(accounts.filter((a) => a._id !== id));
+    setError('');
+    try {
+      const response = await fetch(`/api/employee-accounts/${id}`, { method: 'DELETE' });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || 'Could not delete employee account.');
+      setAccounts((current) => current.filter((account) => account._id !== id));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Could not delete employee account.');
+    }
   };
 
   return (
@@ -86,6 +108,13 @@ export default function EmployeeAccountsPage() {
           <Wallet size={18} /> Add Account
         </button>
       </div>
+      <p className="text-sm text-gray-600">
+        An employee is the worker record used for attendance and payroll. An employee account tracks a separate balance
+        owed to or by that worker; it is not a login account and does not currently change payroll net pay. Account
+        identity details come from the linked employee record. Positive balances are owed to the employee; negative
+        balances are owed by the employee.
+      </p>
+      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
 
       {loading ? (
         <p className="text-gray-500">Loading...</p>
@@ -160,7 +189,16 @@ export default function EmployeeAccountsPage() {
                 className="input"
                 name="employeeId"
                 value={form.employeeId}
-                onChange={(e) => setForm({ ...form, employeeId: e.target.value })}
+                onChange={(event) => {
+                  const employee = employees.find((candidate) => candidate._id === event.target.value);
+                  setForm({
+                    ...form,
+                    employeeId: employee?._id || '',
+                    employeeNo: employee?.employeeNo || '',
+                    firstname: employee?.firstname || '',
+                    lastname: employee?.lastname || '',
+                  });
+                }}
                 required
               >
                 <option value="">— Select employee —</option>
@@ -178,8 +216,7 @@ export default function EmployeeAccountsPage() {
                   className="input"
                   name="firstname"
                   value={form.firstname}
-                  onChange={(e) => setForm({ ...form, firstname: e.target.value })}
-                  required
+                  readOnly
                 />
               </div>
               <div>
@@ -188,8 +225,7 @@ export default function EmployeeAccountsPage() {
                   className="input"
                   name="lastname"
                   value={form.lastname}
-                  onChange={(e) => setForm({ ...form, lastname: e.target.value })}
-                  required
+                  readOnly
                 />
               </div>
             </div>
@@ -199,8 +235,7 @@ export default function EmployeeAccountsPage() {
                 className="input"
                 name="employeeNo"
                 value={form.employeeNo}
-                onChange={(e) => setForm({ ...form, employeeNo: e.target.value })}
-                required
+                readOnly
               />
             </div>
             <div>
@@ -238,8 +273,7 @@ export default function EmployeeAccountsPage() {
                 className="input"
                 name="employeeNo"
                 value={editForm.employeeNo}
-                onChange={(e) => setEditForm({ ...editForm, employeeNo: e.target.value })}
-                required
+                readOnly
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -249,8 +283,7 @@ export default function EmployeeAccountsPage() {
                   className="input"
                   name="firstname"
                   value={editForm.firstname}
-                  onChange={(e) => setEditForm({ ...editForm, firstname: e.target.value })}
-                  required
+                  readOnly
                 />
               </div>
               <div>
@@ -259,8 +292,7 @@ export default function EmployeeAccountsPage() {
                   className="input"
                   name="lastname"
                   value={editForm.lastname}
-                  onChange={(e) => setEditForm({ ...editForm, lastname: e.target.value })}
-                  required
+                  readOnly
                 />
               </div>
             </div>

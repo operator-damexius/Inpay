@@ -5,12 +5,13 @@ import { Clock, LogOut } from 'lucide-react';
 
 type Attendance = {
   _id: string;
-  employee: { firstname: string; lastname: string; shift: string };
+  employee: { firstname: string; lastname: string; shift: string } | null;
   workDate: string;
   timeIn?: string;
   timeOut?: string;
   totalHours: number;
   overtimeHours: number;
+  breakHours?: number;
 };
 
 export default function AttendancePage() {
@@ -102,24 +103,26 @@ export default function AttendancePage() {
                 <th>Shift</th>
                 <th>Time In</th>
                 <th>Time Out</th>
-                <th className="text-right">Hours</th>
+                <th className="text-right">Paid Hrs</th>
                 <th className="text-right">OT</th>
+                <th className="text-right">Break</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="text-gray-500 text-center py-8">Loading...</td></tr>
+                <tr><td colSpan={7} className="text-gray-500 text-center py-8">Loading...</td></tr>
               ) : records.length === 0 ? (
-                <tr><td colSpan={6} className="text-gray-500 text-center py-8">No records yet.</td></tr>
+                <tr><td colSpan={7} className="text-gray-500 text-center py-8">No records yet.</td></tr>
               ) : (
                 records.map((r) => (
                   <tr key={r._id}>
-                    <td>{r.employee.firstname} {r.employee.lastname}</td>
-                    <td>{r.employee.shift}</td>
+                    <td>{r.employee ? `${r.employee.firstname} ${r.employee.lastname}` : 'Employee unavailable'}</td>
+                    <td>{r.employee?.shift ?? '—'}</td>
                     <td>{r.timeIn ? new Date(r.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                     <td>{r.timeOut ? new Date(r.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                     <td className="text-right">{r.totalHours.toFixed(2)}</td>
                     <td className="text-right">{r.overtimeHours.toFixed(2)}</td>
+                    <td className="text-right">{r.breakHours?.toFixed(2) ?? '—'}</td>
                   </tr>
                 ))
               )}

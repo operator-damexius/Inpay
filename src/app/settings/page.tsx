@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import PosCashierSettings from '@/components/PosCashierSettings';
+import { normalizePayrollSettings } from '@/lib/payroll-settings';
 
 type Settings = {
   businessName: string;
@@ -18,6 +19,14 @@ type Settings = {
   posQuantityPrecision: number;
   taxEnabled: boolean;
   taxRate: number;
+  payrollOvertimeEnabled: boolean;
+  payrollOvertimeMultiplier: number;
+  payrollHoursPerDay: number;
+  payrollUnpaidBreakHours: number;
+  payrollSssEnabled: boolean;
+  payrollSssRate: number;
+  payrollThirteenthEnabled: boolean;
+  payrollThirteenthRate: number;
 };
 
 type RecoveryBackup = {
@@ -91,7 +100,7 @@ export default function SettingsPage() {
         ]);
         if (!response.ok) throw new Error(result.error || 'Could not load settings.');
         if (!accountResponse.ok) throw new Error(accountResult.error || 'Could not load system account.');
-        if (active) setSettings(result);
+        if (active) setSettings({ ...result, ...normalizePayrollSettings(result) });
         if (active) {
           setAdminUsername(accountResult.username);
           setAccountForm((current) => ({ ...current, username: accountResult.username }));
@@ -138,7 +147,7 @@ export default function SettingsPage() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not save settings.');
-      setSettings(result);
+      setSettings({ ...result, ...normalizePayrollSettings(result) });
       setMessage('Settings saved.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Could not save settings.');
@@ -215,7 +224,7 @@ export default function SettingsPage() {
       const settingsResponse = await fetch('/api/admin/settings');
       const restoredSettings = await settingsResponse.json();
       if (!settingsResponse.ok) throw new Error(restoredSettings.error || 'Restore completed but settings could not be reloaded.');
-      setSettings(restoredSettings);
+      setSettings({ ...restoredSettings, ...normalizePayrollSettings(restoredSettings) });
     } catch (restoreError) {
       setBackupError(restoreError instanceof Error ? restoreError.message : 'Restore failed.');
     } finally {
@@ -370,45 +379,232 @@ export default function SettingsPage() {
           </section>
 
           <section id="pos-settings" className="scroll-mt-32 space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow">
-            <h2 className="text-lg font-semibold text-gray-900">POS defaults</h2>
             <div>
-              <span className="label">Payment methods</span>
-              <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {PAYMENT_METHODS.map((method) => (
-                  <label key={method.value} className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                      type="checkbox"
-                      checked={settings.posPaymentMethods.includes(method.value)}
-                      onChange={(event) => {
-                        const methods = event.target.checked
-                          ? [...settings.posPaymentMethods, method.value]
-                          : settings.posPaymentMethods.filter((value) => value !== method.value);
-                        setSettings({ ...settings, posPaymentMethods: methods });
-                      }}
-                    />
-                    {method.label}
-                  </label>
-                ))}
+              <h2 className="text-lg font-semibold text-gray-900">POS defaults</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Configure accepted payment methods, quantity precision, and point-of-sale tax.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2 rounded-md border border-gray-200 bg-gray-50/50 p-4">
+                <span className="label">Payment methods</span>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {PAYMENT_METHODS.map((method) => (
+                    <label key={method.value} className="flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={settings.posPaymentMethods.includes(method.value)}
+                        onChange={(event) => {
+                          const methods = event.target.checked
+                            ? [...settings.posPaymentMethods, method.value]
+                            : settings.posPaymentMethods.filter((value) => value !== method.value);
+                          setSettings({ ...settings, posPaymentMethods: methods });
+                        }}
+                      />
+                      {method.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50/50 p-4">
+                <div>
+                  <label className="label" htmlFor="quantity-precision">Quantity decimal places</label>
+                  <input
+                    id="quantity-precision"
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={4}
+                    value={settings.posQuantityPrecision}
+                    onChange={(event) => setSettings({
+                      ...settings,
+                      posQuantityPrecision: Number(event.target.value),
+                    })}
+                    required
+                  />
+                </div>
               </div>
             </div>
-            <div className="max-w-xs">
-              <label className="label" htmlFor="quantity-precision">Quantity decimal places</label>
-              <input
-                id="quantity-precision"
-                className="input"
-                type="number"
-                min={0}
-                max={4}
-                value={settings.posQuantityPrecision}
-                onChange={(event) => setSettings({
-                  ...settings,
-                  posQuantityPrecision: Number(event.target.value),
-                })}
-                required
-              />
+            <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50/50 p-4">
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.taxEnabled)}
+                  onChange={(event) => setSettings({
+                    ...settings,
+                    taxEnabled: event.target.checked,
+                  })}
+                />
+                Enable POS tax
+              </label>
+              <div className="max-w-xs">
+                <label className="label" htmlFor="pos-tax-rate">Tax rate (%)</label>
+                <input
+                  id="pos-tax-rate"
+                  className="input"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.01"
+                  value={Number.isFinite(settings.taxRate) ? settings.taxRate * 100 : 0}
+                  onChange={(event) => setSettings({
+                    ...settings,
+                    taxRate: Number(event.target.value) / 100,
+                  })}
+                  required
+                />
+              </div>
             </div>
-            <p className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-              Tax is disabled until you provide a verified tax rate and calculation policy.
+          </section>
+
+          <section id="payroll-settings" className="scroll-mt-32 space-y-4 rounded-lg border border-gray-200 bg-white p-6 shadow xl:col-span-2">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Payroll calculations</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                These settings apply when an open payroll run is computed. Closed and paid runs are not recalculated.
+                Review your payroll policy before changing rates.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="label" htmlFor="payroll-hours-per-day">Standard work hours per day</label>
+                  <input
+                    id="payroll-hours-per-day"
+                    className="input"
+                    type="number"
+                    min={0.1}
+                    max={24}
+                    step="0.1"
+                    value={settings.payrollHoursPerDay}
+                    onChange={(event) => setSettings({
+                      ...settings,
+                      payrollHoursPerDay: Number(event.target.value),
+                    })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="payroll-unpaid-break-hours">Unpaid break (hours)</label>
+                  <input
+                    id="payroll-unpaid-break-hours"
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={4}
+                    step="0.25"
+                    value={settings.payrollUnpaidBreakHours}
+                    onChange={(event) => setSettings({
+                      ...settings,
+                      payrollUnpaidBreakHours: Number(event.target.value),
+                    })}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50/50 p-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={settings.payrollOvertimeEnabled}
+                      onChange={(event) => setSettings({
+                        ...settings,
+                        payrollOvertimeEnabled: event.target.checked,
+                      })}
+                    />
+                    Apply overtime premium
+                  </label>
+                  <div>
+                    <label className="label" htmlFor="payroll-overtime-multiplier">Overtime multiplier</label>
+                    <input
+                      id="payroll-overtime-multiplier"
+                      className="input"
+                      type="number"
+                      min={1}
+                      max={10}
+                      step="0.01"
+                      value={settings.payrollOvertimeMultiplier}
+                      onChange={(event) => setSettings({
+                        ...settings,
+                        payrollOvertimeMultiplier: Number(event.target.value),
+                      })}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50/50 p-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={settings.payrollSssEnabled}
+                      onChange={(event) => setSettings({
+                        ...settings,
+                        payrollSssEnabled: event.target.checked,
+                      })}
+                    />
+                    Apply SSS deduction
+                  </label>
+                  <div>
+                    <label className="label" htmlFor="payroll-sss-rate">Flat SSS percentage of gross pay</label>
+                    <input
+                      id="payroll-sss-rate"
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      value={settings.payrollSssRate * 100}
+                      onChange={(event) => setSettings({
+                        ...settings,
+                        payrollSssRate: Number(event.target.value) / 100,
+                      })}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50/50 p-4">
+                  <label className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                    <input
+                      type="checkbox"
+                      checked={settings.payrollThirteenthEnabled}
+                      onChange={(event) => setSettings({
+                        ...settings,
+                        payrollThirteenthEnabled: event.target.checked,
+                      })}
+                    />
+                    Accrue 13th-month pay separately
+                  </label>
+                  <div>
+                    <label className="label" htmlFor="payroll-thirteenth-rate">Accrual percentage of regular pay</label>
+                    <input
+                      id="payroll-thirteenth-rate"
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      value={settings.payrollThirteenthRate * 100}
+                      onChange={(event) => setSettings({
+                        ...settings,
+                        payrollThirteenthRate: Number(event.target.value) / 100,
+                      })}
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+              Standard work hours set both the overtime threshold and the divisor for hourly pay:
+              hourly rate = employee daily rate ÷ standard hours. If the overtime premium is off, recorded hours still
+              receive base pay. Gross = base pay + overtime premium. SSS is a configurable flat percentage of gross;
+              a 13th-month accrual is a separate percentage of regular pay and is not deducted from net pay. The unpaid
+              break is deducted only when elapsed time reaches standard hours plus the break duration. This flat SSS
+              setting is not a statutory contribution bracket table.
             </p>
           </section>
 
@@ -435,13 +631,16 @@ export default function SettingsPage() {
             <div className="space-y-3 border-t border-gray-200 pt-4">
               <h3 className="font-medium text-gray-900">Restore from backup</h3>
               <form onSubmit={importBackup} className="space-y-3">
-                <input
-                  className="input"
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={(event) => setRestoreFile(event.target.files?.[0] ?? null)}
-                  required
-                />
+                <label className="block">
+                  <span className="sr-only">Choose backup file</span>
+                  <input
+                    className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-Inpay-50 file:text-Inpay-700 hover:file:bg-Inpay-100 cursor-pointer"
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={(event) => setRestoreFile(event.target.files?.[0] ?? null)}
+                    required
+                  />
+                </label>
                 <div>
                   <label className="label" htmlFor="restore-confirmation">
                     Type REPLACE APPLICATION DATA
@@ -455,7 +654,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <button
-                  className="btn-ghost"
+                  className="btn-primary"
                   type="submit"
                   disabled={operation !== '' || restoreConfirmation !== 'REPLACE APPLICATION DATA'}
                 >

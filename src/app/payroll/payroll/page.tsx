@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Play, RefreshCw } from 'lucide-react';
 
 type Run = { _id: string; periodStart: string; periodEnd: string; status: string; datePaid?: string };
+type PaymentAccount = { code: string; name: string };
 
 export default function PayrollPage() {
   const [runs, setRuns] = useState<Run[]>([]);
@@ -12,31 +13,71 @@ export default function PayrollPage() {
   const [end, setEnd] = useState('');
   const [error, setError] = useState('');
   const [markingPaidId, setMarkingPaidId] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [computingId, setComputingId] = useState('');
+  const [paymentAccounts, setPaymentAccounts] = useState<PaymentAccount[]>([]);
+  const [paymentAccountCode, setPaymentAccountCode] = useState('BANK');
 
   useEffect(() => {
-    fetch('/api/payroll/payroll-runs')
-      .then((r) => r.json())
-      .then((data) => { setRuns(data); setLoading(false); });
+    Promise.all([
+      fetch('/api/payroll/payroll-runs').then((r) => r.json()),
+      fetch('/api/ledger/accounts').then(async (r) => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data?.error || 'Could not load payout accounts.');
+        return data as Array<PaymentAccount & { type: string; isActive: boolean }>;
+      }),
+    ])
+      .then(([runData, accountData]) => {
+        setRuns(runData);
+        const assets = accountData.filter((account) => account.type === 'asset' && account.isActive);
+        setPaymentAccounts(assets);
+        if (!assets.some((account) => account.code === 'BANK') && assets[0]) {
+          setPaymentAccountCode(assets[0].code);
+        }
+      })
+      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : 'Could not load payroll data.'))
+      .finally(() => setLoading(false));
   }, []);
 
   const createRun = async () => {
-    const res = await fetch('/api/payroll/payroll-runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ periodStart: start, periodEnd: end }),
-    });
-    if (res.ok) {
-      const run = await res.json();
-      setRuns([run, ...runs]);
+    setError('');
+    setCreating(true);
+    try {
+      const response = await fetch('/api/payroll/payroll-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ periodStart: start, periodEnd: end }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(result?.error || 'Could not create payroll run.');
+      }
+      setRuns((current) => [result, ...current]);
       setStart('');
       setEnd('');
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not create payroll run.');
+    } finally {
+      setCreating(false);
     }
   };
 
   const compute = async (id: string) => {
     if (!confirm('Compute payroll for all employees in this period?')) return;
-    await fetch(`/api/payroll/payroll-runs/${id}/compute`, { method: 'POST' });
-    location.reload();
+    setError('');
+    setComputingId(id);
+    try {
+      const response = await fetch(`/api/payroll/payroll-runs/${id}/compute`, { method: 'POST' });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(result?.error || 'Could not compute payroll.');
+      }
+      location.reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Could not compute payroll.');
+    } finally {
+      setComputingId('');
+    }
   };
 
   const markPaid = async (id: string) => {
@@ -44,7 +85,11 @@ export default function PayrollPage() {
     setError('');
     setMarkingPaidId(id);
     try {
-      const response = await fetch(`/api/payroll/payroll-runs/${id}/mark-paid`, { method: 'POST' });
+      const response = await fetch(`/api/payroll/payroll-runs/${id}/mark-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paymentAccountCode }),
+      });
       const result = await response.json().catch(() => null);
       if (!response.ok) {
         throw new Error(result?.error || 'Could not mark payroll run as paid.');
@@ -77,9 +122,26 @@ export default function PayrollPage() {
             <input className="input" type="date" value={end} onChange={(e) => setEnd(e.target.value)} required />
           </div>
           <div className="col-span-2 md:col-span-1">
-            <button type="submit" className="btn-primary w-full">Create Run</button>
+            <button type="submit" className="btn-primary w-full" disabled={creating}>
+              {creating ? 'Creating...' : 'Create Run'}
+            </button>
           </div>
         </form>
+      </div>
+
+      <div className="max-w-sm">
+        <label className="label" htmlFor="payroll-payout-account">Payroll payout account</label>
+        <select
+          id="payroll-payout-account"
+          className="input"
+          value={paymentAccountCode}
+          onChange={(event) => setPaymentAccountCode(event.target.value)}
+          disabled={!paymentAccounts.length}
+        >
+          {paymentAccounts.map((account) => (
+            <option key={account.code} value={account.code}>{account.name}</option>
+          ))}
+        </select>
       </div>
 
       <div className="bg-white rounded-lg shadow border border-gray-200">
@@ -120,8 +182,9 @@ export default function PayrollPage() {
                         <button
                           className="btn-ghost text-xs"
                           onClick={() => compute(r._id)}
+                          disabled={computingId === r._id}
                         >
-                          <Play size={14} /> Compute
+                          <Play size={14} /> {computingId === r._id ? 'Computing...' : 'Compute'}
                         </button>
                       )}
                       {r.status === 'Closed' && (

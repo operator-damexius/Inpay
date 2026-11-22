@@ -4,10 +4,11 @@ import AppSettings from '@/models/AppSettings';
 import CashierCredential from '@/models/CashierCredential';
 import Employee from '@/models/Employee';
 import Item from '@/models/Item';
-import Ledger from '@/models/Ledger';
+import { ensureDefaultLedgerAccounts, getDefaultAccountCodeForPaymentMethod, initializeLedgerAccounting, postJournalEntry } from '@/lib/ledger-accounting';
 import Location from '@/models/Location';
 import '@/models/Unit';
 import Sale, { type ISale } from '@/models/Sale';
+import type { IJournalLine } from '@/models/JournalEntry';
 import StockBalance from '@/models/StockBalance';
 import { connectToDatabase } from '@/lib/mongoose';
 import { removeStock } from '@/lib/stock-balances';
@@ -78,22 +79,28 @@ export const POST = withErrorHandler(async (request: Request) => {
     return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
   }
 
-  const body = await request.json();
-  const locationId = typeof body.locationId === 'string' ? body.locationId : '';
-  const customer = typeof body.customer === 'string' && body.customer.trim()
-    ? body.customer.trim()
+  const body: unknown = await request.json();
+  if (typeof body !== 'object' || body === null) throw new ApiError('Enter valid sale details.', 400);
+  const values = body as Record<string, unknown>;
+  const idempotencyKey = typeof values.idempotencyKey === 'string' ? values.idempotencyKey.trim() : '';
+  if (!/^[A-Za-z0-9_-]{16,100}$/.test(idempotencyKey)) {
+    throw new ApiError('A valid checkout idempotency key is required.', 400);
+  }
+  const locationId = typeof values.locationId === 'string' ? values.locationId : '';
+  const customer = typeof values.customer === 'string' && values.customer.trim()
+    ? values.customer.trim()
     : 'Walk-in';
-  const paymentMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod : '';
+  const paymentMethod = typeof values.paymentMethod === 'string' ? values.paymentMethod : '';
   if (!mongoose.isValidObjectId(locationId)) {
     throw new ApiError('Choose a valid stock location.', 400);
   }
   if (customer.length > 160) throw new ApiError('Customer name must be 160 characters or fewer.', 400);
-  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 100) {
+  if (!Array.isArray(values.items) || values.items.length === 0 || values.items.length > 100) {
     throw new ApiError('Add between 1 and 100 items to the sale.', 400);
   }
 
   const quantities = new Map<string, number>();
-  for (const line of body.items) {
+  for (const line of values.items) {
     if (!line || typeof line.itemId !== 'string' || !mongoose.isValidObjectId(line.itemId)) {
       throw new ApiError('The sale contains an invalid item.', 400);
     }
@@ -121,6 +128,7 @@ export const POST = withErrorHandler(async (request: Request) => {
     throw new ApiError('Choose an enabled payment method.', 400);
   }
 
+  await Promise.all([initializeLedgerAccounting(), Sale.init()]);
   const session = await mongoose.startSession();
   let saleId = '';
   try {
@@ -134,6 +142,14 @@ export const POST = withErrorHandler(async (request: Request) => {
         sessionVersion: cashierSession.sessionVersion,
       }).session(session);
       if (!cashier || !credential) throw new ApiError('Cashier session is no longer active.', 401);
+      const existingSale = await Sale.findOne({ idempotencyKey }).session(session);
+      if (existingSale) {
+        if (existingSale.cashier.toString() !== cashier._id.toString()) {
+          throw new ApiError('This checkout key belongs to a different cashier.', 409);
+        }
+        saleId = existingSale._id.toString();
+        return;
+      }
       const location = await Location.findById(locationId).session(session);
       if (!location) throw new ApiError('The selected location no longer exists.', 400);
 
@@ -207,6 +223,7 @@ export const POST = withErrorHandler(async (request: Request) => {
       const receiptNo = `POS-${datePart}-${saleObjectId.toString().slice(-8).toUpperCase()}`;
       const [sale] = await Sale.create([{
         _id: saleObjectId,
+        idempotencyKey,
         receiptNo,
         cashier: cashier._id,
         cashierName: `${cashier.firstname} ${cashier.lastname}`,
@@ -221,35 +238,61 @@ export const POST = withErrorHandler(async (request: Request) => {
         tax: 0,
         total: subtotal,
       }], { session });
-      const lastLedgerEntry = await Ledger.findOne({}, { balance: 1 })
-        .sort({ date: -1, createdAt: -1 })
-        .session(session);
-      const currentBalance = lastLedgerEntry?.balance ?? 0;
-      await Ledger.create([{
-        type: 'item',
-        pnlCategory: 'sales_income',
+      const accounts = await ensureDefaultLedgerAccounts(session);
+      const paymentAccount = accounts.get(getDefaultAccountCodeForPaymentMethod(paymentMethod));
+      const salesAccount = accounts.get('SALES');
+      const inventoryAccount = accounts.get('INVENTORY');
+      const cogsAccount = accounts.get('COGS');
+      if (!paymentAccount || !salesAccount || !inventoryAccount || !cogsAccount) {
+        throw new ApiError('Default ledger accounts are not available.', 500);
+      }
+      const lines: IJournalLine[] = [
+        { account: paymentAccount._id, debit: sale.total, credit: 0 },
+        { account: salesAccount._id, debit: 0, credit: sale.subtotal, pnlCategory: 'sales_income' as const },
+      ];
+      if (sale.tax > 0) {
+        const taxAccount = accounts.get('SALES_TAX_PAYABLE');
+        if (!taxAccount) throw new ApiError('Sales tax account is not available.', 500);
+        lines.push({
+          account: taxAccount._id,
+          debit: 0,
+          credit: sale.tax,
+          pnlCategory: 'unclassified' as const,
+        });
+      }
+      if (cogsTotal > 0) {
+        lines.push(
+          { account: cogsAccount._id, debit: cogsTotal, credit: 0, pnlCategory: 'cost_of_goods_sold' as const },
+          { account: inventoryAccount._id, debit: 0, credit: cogsTotal }
+        );
+      }
+      await postJournalEntry({
+        sourceKey: `pos-sale:${sale._id.toString()}`,
+        sourceType: 'pos-sale',
         reference: receiptNo,
         description: `POS sale at ${location.name} (${paymentMethod})`,
-        amount: subtotal,
-        balance: currentBalance + subtotal,
         date: sale.createdAt,
+        lines,
         createdBy: `${cashier.firstname} ${cashier.lastname}`,
-      }], { session });
-      if (cogsTotal > 0) {
-        await Ledger.create([{
-          type: 'item',
-          pnlCategory: 'cost_of_goods_sold',
-          reference: `COGS-${receiptNo}`,
-          description: `Cost of goods sold for ${receiptNo}`,
-          amount: -cogsTotal,
-          balance: currentBalance + subtotal - cogsTotal,
-          date: sale.createdAt,
-          createdBy: `${cashier.firstname} ${cashier.lastname}`,
-          createdAt: new Date(sale.createdAt.getTime() + 1),
-        }], { session });
-      }
+      }, session);
       saleId = sale._id.toString();
     });
+  } catch (error) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 11000
+    ) {
+      const existingSale = await Sale.findOne({ idempotencyKey });
+      if (existingSale && existingSale.cashier.toString() === cashierSession.employeeId) {
+        saleId = existingSale._id.toString();
+      } else {
+        throw error;
+      }
+    } else {
+      throw error;
+    }
   } finally {
     await session.endSession();
   }

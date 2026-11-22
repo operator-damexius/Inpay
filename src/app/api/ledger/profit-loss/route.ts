@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
-import Ledger from '@/models/Ledger';
+import JournalEntry from '@/models/JournalEntry';
 import { connectToDatabase } from '@/lib/mongoose';
 import { ApiError, withErrorHandler } from '@/lib/api-handler';
+import { getAdminUsername } from '@/lib/admin-auth';
+import { migrateLegacyLedgerEntries } from '@/lib/ledger-accounting';
 import { PNL_CATEGORIES } from '@/lib/pnl-categories';
 
 function parseDate(value: string | null): Date | null {
@@ -11,15 +13,13 @@ function parseDate(value: string | null): Date | null {
 }
 
 export const GET = withErrorHandler(async (req: Request) => {
+  const username = await getAdminUsername(req);
+  if (!username) throw new ApiError('Admin sign-in required.', 401);
   const { searchParams } = new URL(req.url);
   const startDate = parseDate(searchParams.get('from'));
   const endDate = parseDate(searchParams.get('to'));
-  if (!startDate || !endDate) {
-    throw new ApiError('Valid from and to dates are required.', 400);
-  }
-  if (startDate > endDate) {
-    throw new ApiError('The start date must be on or before the end date.', 400);
-  }
+  if (!startDate || !endDate) throw new ApiError('Valid from and to dates are required.', 400);
+  if (startDate > endDate) throw new ApiError('The start date must be on or before the end date.', 400);
 
   const endExclusive = new Date(endDate);
   endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
@@ -35,17 +35,19 @@ export const GET = withErrorHandler(async (req: Request) => {
     .map((category) => category.value);
 
   await connectToDatabase();
-  const [summaryResult, expensesByType] = await Promise.all([
-    Ledger.aggregate([
+  await migrateLegacyLedgerEntries();
+  const [summaryResult, expensesByType, entryCount] = await Promise.all([
+    JournalEntry.aggregate([
       { $match: { date: dateFilter } },
+      { $unwind: '$lines' },
       {
         $group: {
-          _id: null,
+          _id: '$_id',
           income: {
             $sum: {
               $cond: [
-                { $and: [{ $in: ['$pnlCategory', incomeCategories] }, { $gt: ['$amount', 0] }] },
-                '$amount',
+                { $in: ['$lines.pnlCategory', incomeCategories] },
+                { $subtract: ['$lines.credit', '$lines.debit'] },
                 0,
               ],
             },
@@ -53,44 +55,53 @@ export const GET = withErrorHandler(async (req: Request) => {
           expenses: {
             $sum: {
               $cond: [
-                { $and: [{ $in: ['$pnlCategory', expenseCategories] }, { $lt: ['$amount', 0] }] },
-                { $abs: '$amount' },
+                { $in: ['$lines.pnlCategory', expenseCategories] },
+                { $subtract: ['$lines.debit', '$lines.credit'] },
                 0,
               ],
             },
           },
-          entryCount: { $sum: 1 },
+          categories: { $addToSet: '$lines.pnlCategory' },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          income: { $sum: '$income' },
+          expenses: { $sum: '$expenses' },
           unclassifiedCount: {
+            $sum: { $cond: [{ $in: ['unclassified', '$categories'] }, 1, 0] },
+          },
+          nonPnlCount: {
             $sum: {
               $cond: [
-                { $eq: [{ $ifNull: ['$pnlCategory', 'unclassified'] }, 'unclassified'] },
+                { $gt: [{ $size: { $setIntersection: ['$categories', nonPnlCategories] } }, 0] },
                 1,
                 0,
               ],
             },
           },
-          nonPnlCount: {
-            $sum: { $cond: [{ $in: ['$pnlCategory', nonPnlCategories] }, 1, 0] },
-          },
         },
       },
     ]),
-    Ledger.aggregate([
-      { $match: { date: dateFilter, pnlCategory: { $in: expenseCategories }, amount: { $lt: 0 } } },
+    JournalEntry.aggregate([
+      { $match: { date: dateFilter } },
+      { $unwind: '$lines' },
+      { $match: { 'lines.pnlCategory': { $in: expenseCategories } } },
       {
         $group: {
-          _id: '$pnlCategory',
-          amount: { $sum: { $abs: '$amount' } },
+          _id: '$lines.pnlCategory',
+          amount: { $sum: { $subtract: ['$lines.debit', '$lines.credit'] } },
         },
       },
+      { $match: { amount: { $gt: 0 } } },
       { $sort: { amount: -1 } },
     ]),
+    JournalEntry.countDocuments({ date: dateFilter }),
   ]);
-
   const summary = summaryResult[0] ?? {
     income: 0,
     expenses: 0,
-    entryCount: 0,
     unclassifiedCount: 0,
     nonPnlCount: 0,
   };
@@ -98,7 +109,7 @@ export const GET = withErrorHandler(async (req: Request) => {
     income: summary.income,
     expenses: summary.expenses,
     netProfit: summary.income - summary.expenses,
-    entryCount: summary.entryCount,
+    entryCount,
     unclassifiedCount: summary.unclassifiedCount,
     nonPnlCount: summary.nonPnlCount,
     expensesByType: expensesByType.map((entry) => ({
